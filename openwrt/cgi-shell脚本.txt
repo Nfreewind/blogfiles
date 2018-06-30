@@ -1,0 +1,43 @@
+1,基本写法：
+#!/bin/sh
+echo "Status: 200 OK"
+echo "Content-Type: text/html"
+echo "Cache-Control: no-cache"
+echo "Expires: 0"
+echo ""
+echo "hello"
+
+2,获取SSID和密码,返回json格式
+#!/bin/sh
+echo "Content-Type: application/json"
+echo ""
+ssid=`uci get wireless.@wifi-iface[0].ApCliSsid`
+password=`uci get wireless.@wifi-iface[0].ApCliWPAPSK`
+ch=`uci get wireless.mt7628.channel`
+
+if [ $ssid ]; then
+    echo "{\"result\":\"success\",\"ApCliSsid\":\"$ssid\", \"ApCliWPAPSK\":\"$password\",\"channel\":$ch}"
+else
+    echo "{\"result\":\"error\",\"message\":\"can not get ssid\"}"
+fi
+
+3,获取网络接口状态
+#!/bin/sh
+echo "Content-Type: application/json"
+echo ""
+
+#QUERY_STRING="name=network.interface.wan&bb=33&aa=4"
+
+args=`echo $QUERY_STRING|tr "&" "\n"`
+
+
+for x in $args; do	
+	argname=`echo $x | cut -d'=' -f 1` 
+	argvalue=`echo $x | cut -d'=' -f 2`
+
+ 	if [ "$argname"x = "name"x ] ; then
+		json=`ubus call $argvalue status`		
+		echo $json
+		return
+	fi
+done

@@ -1,0 +1,165 @@
+OpenWrt的两种模式：桥接模式与路由模式
+
+/etc/config/network //网络配置，使用桥接eth0.1>
+config interface 'loopback'
+        option ifname 'lo'
+        option proto 'static'
+        option ipaddr '127.0.0.1'
+        option netmask '255.0.0.0'
+
+config globals 'globals'
+        option ula_prefix 'fdd5:5324:7f21::/48'
+
+config interface 'lan'
+        option ifname 'eth0.1'
+        option force_link '1'
+        option type 'bridge'
+        option proto 'dhcp'
+		option hostname 'hkgateway'
+
+config interface 'wan'
+        option ifname 'apcli0'
+        option proto 'dhcp'
+		option hostname 'hkgateway-wifi'
+
+config interface 'wan6'
+        option ifname '@wan'
+        option proto 'dhcpv6'
+
+/etc/config/wireless //WIFI配置,使用桥接network到lan
+config wifi-device 'mt7628'
+	option type 'mt7628'
+	option vendor 'ralink'
+	option band '2.4G'
+	option channel '0'
+	option auotch '2'
+
+config wifi-iface
+	option device 'mt7628'
+	option ifname 'ra0'
+	option network 'lan'
+	option mode 'ap'
+	option ssid 'hankgw'
+	option hidden '0'
+	option encryption 'psk2'
+	option key '12345678'
+/////////////////////以上为桥接模式///////////////////////////////////////////////////////////
+
+/etc/config# cat network
+config interface 'loopback'
+	option ifname 'lo'
+	option proto 'static'
+	option ipaddr '127.0.0.1'
+	option netmask '255.0.0.0'
+
+config globals 'globals'
+	option ula_prefix 'fdba:58f7:a915::/48'
+
+config interface 'lan'
+	option ifname 'eth0.1'
+	option force_link '1'
+	option proto 'dhcp'
+	option hostname 'hkgateway'
+
+config interface 'wan'
+	option ifname 'apcli0'
+	option proto 'dhcp'
+	option hostname 'hkgateway-wifi'
+
+config interface 'wan6'
+	option ifname '@wan'
+	option proto 'dhcpv6'
+
+config interface 'wifi'
+	option proto 'static'
+	option 'ipaddr' '192.168.2.1'
+	option 'netmask' '255.255.255.0'
+
+/etc/config# cat wireless 
+config wifi-device 'mt7628'
+	option type 'mt7628'
+	option vendor 'ralink'
+	option band '2.4G'
+	option channel '0'
+	option auotch '2'
+
+config wifi-iface
+	option device 'mt7628'
+	option network 'wifi'
+	option mode 'ap'
+	option ssid 'hankgw'
+	option hidden '0'
+	option encryption 'psk2'
+	option key '12345678'
+	option ifname 'ra0'
+	
+/etc/config# cat dhcp
+config dnsmasq
+	option domainneeded '1'
+	option boguspriv '1'
+	option filterwin2k '0'
+	option localise_queries '1'
+	option rebind_protection '1'
+	option rebind_localhost '1'
+	option local '/lan/'
+	option domain 'lan'
+	option expandhosts '1'
+	option nonegcache '0'
+	option authoritative '1'
+	option readethers '1'
+	option leasefile '/tmp/dhcp.leases'
+	option resolvfile '/tmp/resolv.conf.auto'
+
+config dhcp 'lan'
+	option interface 'lan'
+	option start '100'
+	option limit '150'
+	option leasetime '12h'
+	option dhcpv6 'server'
+	option ra 'server'
+
+config dhcp 'wan'
+	option interface 'wan'
+	option ignore '1'
+
+config odhcpd 'odhcpd'
+	option maindhcp '0'
+	option leasefile '/tmp/hosts/odhcpd'
+	option leasetrigger '/usr/sbin/odhcpd-update'
+
+ config dhcp wifi  
+        option interface        wifi  
+        option start    100  
+        option limit    150  
+        option leasetime        12h 
+        
+#/etc/init.d/network restart
+#/etc/init.d/dnsmasq restart
+/////////////////////以上为路由模式///////////////////////////////////////////////////////////
+#接口
+uci set network.wifi=interface
+uci set network.wifi.proto=static
+uci set network.wifi.ipaddr=192.168.2.1
+uci set network.wifi.netmask=255.255.255.0
+
+#设置AP热点
+uci set wireless.@wifi-iface[0].ifname=ra0
+uci set wireless.@wifi-iface[0].network=wif
+uci set wireless.@wifi-iface[0].mode=ap
+uci set wireless.@wifi-iface[0].ssid=hankgw
+uci set wireless.@wifi-iface[0].key=12345678
+uci set wireless.@wifi-iface[0].encryption=psk2
+uci set wireless.@wifi-iface[0].hidden=0
+
+#dhcp 
+uci set dhcp.wifi=dhcp
+uci set dhcp.wifi.interface=wifi
+uci set dhcp.wifi.start=100
+uci set dhcp.wifi.limit=150
+uci set dhcp.wifi.leasetime=12h
+
+uci commit
+
+/etc/init.d/dnsmasq disable
+/etc/init.d/network restart
+/etc/init.d/dnsmasq restart

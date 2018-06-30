@@ -1,0 +1,28 @@
+1,扫描WIFI
+iwpriv apcli0 set SiteSurvey=
+iwpriv apcli0 get_site_survey
+
+下面写法会让无线连接断开
+iwpriv apcli0 set AutoChannelSel=1
+iwpriv apcli0 get_site_survey
+
+2,连接WIFI
+
+iwpriv apcli0 set ApCliEnable=0
+iwpriv apcli0 set ApCliSsid=$ApCliSsid
+iwpriv apcli0 set ApCliWPAPSK=$ApCliWPAPSK
+	#如果是空密码时的连接
+	if [ "$ApCliWPAPSK"x = ""x ] ; then 
+		iwpriv apcli0 set ApCliAuthMode=OPEN
+		iwpriv apcli0 set ApCliEncrypType=NONE
+	else
+		iwpriv apcli0 set ApCliWPAPSK=$ApCliWPAPSK
+		iwpriv apcli0 set ApCliAuthMode=WPA2PSK
+		iwpriv apcli0 set ApCliEncrypType=AES
+	fi
+
+iwpriv apcli0 set ApCliEnable=1
+
+3,显示连接状态(感觉和iwconfig一样,只是显示当前连接到的ssid)
+iwpriv apcli0 show connStatus
+
