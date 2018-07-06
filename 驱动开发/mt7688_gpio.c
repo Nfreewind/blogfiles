@@ -15,7 +15,7 @@
 
 #include <asm/uaccess.h>
 
-#define CONFIG_RALINK_MT7628
+//#define CONFIG_RALINK_MT7628
 
 #include <asm/rt2880/rt_mmap.h>
 #include <asm/rt2880/surfboardint.h>
@@ -86,13 +86,80 @@
 
 #define DEVICE_NAME "cgpio"
 
+struct led_blink_args {
+	unsigned int gpio;
+	unsigned int enable;
+	unsigned int timer;
+};
+
+struct led_blink {
+	int enable;
+	int value;
+
+	unsigned long timer; //定时间隔时间
+	unsigned long timer_tmp; //上次切换的时间
+};
+
+struct led_blink _led_blink[50];
+
 struct timer_list _my_led_timer;
 
 static DECLARE_WAIT_QUEUE_HEAD(my_waitq);
 static volatile int ev_press = 0;                //中断事件标志, 中断服务程序将它置1
-
 volatile int _irq_count = 0;
 
+static int get_gpio_value(int gpio) {
+	unsigned int v = 0;
+	u32 tmp;
+	if (gpio < 32) {
+		v = 1 << gpio;
+		tmp = le32_to_cpu(*(volatile u32 *)(RALINK_REG_PIODATA)); //
+	} else if (gpio < 64) {
+		v = 1 << (gpio - 32);
+		tmp = le32_to_cpu(*(volatile u32 *)(RALINK_REG_PIO6332DATA)); //
+	} else {
+		v = 1 << (gpio - 64);
+		tmp = le32_to_cpu(*(volatile u32 *)(RALINK_REG_PIO9564DATA)); //
+	}
+	v = tmp & v;
+	return v == 0 ? 0 : 1;
+}
+
+static void set_gpio_value(int gpio, int value) {
+	int v;
+	u32 tmp = 0;
+
+	if (gpio < 32) {
+		v = 0x01 << gpio;
+		if (value) {
+			tmp = le32_to_cpu(*(volatile u32 *)(RALINK_REG_PIOSET));
+			tmp |= v;
+			*(volatile u32 *) (RALINK_REG_PIOSET) = cpu_to_le32( v); //GPIO0 to GPIO31 data set register
+		} else
+			*(volatile u32 *) (RALINK_REG_PIORESET) = cpu_to_le32(v); //GPIO0 to GPIO31 data clear register
+	} else if (gpio < 64) {
+		v = 0x01 << (gpio - 32);
+		if (value) {
+			tmp = le32_to_cpu(*(volatile u32 *)(RALINK_REG_PIO6332SET));
+			tmp |= v;
+			*(volatile u32 *) (RALINK_REG_PIO6332SET) = cpu_to_le32(v); //GPIO32 to GPIO63 data set register
+		} else {
+			*(volatile u32 *) (RALINK_REG_PIO6332RESET) = cpu_to_le32(v);
+		}
+	} else {
+		v = 0x01 << (gpio - 64);
+		if (value) {
+			tmp = le32_to_cpu(*(volatile u32 *)(RALINK_REG_PIO9564SET));
+			tmp |= v;
+			*(volatile u32 *) (RALINK_REG_PIO9564SET) = cpu_to_le32(v); //GPIO64 to GPIO95 data set register
+		} else {
+			*(volatile u32 *) (RALINK_REG_PIO9564RESET) = cpu_to_le32(v);
+		}
+	}
+}
+
+//reg s 0
+//reg r
 static irqreturn_t my_irq_handler(int irq, void *dev_id) {
 	//ev_press = 1;
 	//wake_up_interruptible(&my_waitq);
@@ -109,28 +176,43 @@ static irqreturn_t my_irq_handler(int irq, void *dev_id) {
 	*(volatile u32 *) (RALINK_REG_PIOEDGE) = cpu_to_le32(0xFFFFFFFF);
 	now = jiffies;
 
-	printk(KERN_EMERG"irq state 0x%08x\n", _gpio_intp);
-	printk(KERN_EMERG"irq edge 0x%08x\n", _gpio_edge);
-	printk(KERN_EMERG"my_irq_handler .............................\n");
+	//printk(KERN_EMERG"irq state 0x%08x\n", _gpio_intp);
+	//printk(KERN_EMERG"irq edge 0x%08x\n", _gpio_edge);
 	//那个按键产生中断
-	for (i = 0; i < 32; i++) {
-		if (!(ralink_gpio_intp & (1 << i)))
-			continue;
-
+//	for (i = 0; i < 32; i++) {
+//		if (!(_gpio_intp & (1 << i)))
+//			continue;
+//		printk(KERN_EMERG"interrupt -> GPIO-%d \n", i);
+//	}
+	if (_gpio_intp & (1)) { 		//GPIO0
+		ev_press = 1;
+		wake_up_interruptible(&my_waitq);
+	}
+	if (_gpio_intp & (1 << 2)) { //GPIO2
+		ev_press = 1;
+		wake_up_interruptible(&my_waitq);
+	}
+	if (_gpio_intp & (1 << 3)) { //GPIO3
+		ev_press = 1;
+		wake_up_interruptible(&my_waitq);
 	}
 	return IRQ_RETVAL(IRQ_HANDLED);
 }
 
-#define MTIOCTL_SET_DIR_IN 		0
-#define MTIOCTL_SET_DIR_OUT 	1
-#define MTIOCTL_SET_VALUE        2
-#define MTIOCTL_ENABLE_IRQ	3
-#define MTIOCTL_SET_INTERRUPT 4
+#define MTIOCTL_SET_DIR_IN 			0
+#define MTIOCTL_SET_DIR_OUT 		1
+#define MTIOCTL_SET_VALUE        	2
+#define MTIOCTL_GET_VALUE			3
+#define MTIOCTL_ENABLE_IRQ		4
+#define MTIOCTL_SET_INTERRUPT 5
+#define MTIOCTL_SET_LED_BLINK  6
 
 struct arg_type {
 	unsigned int gpio;
 	unsigned int value;
 };
+
+volatile unsigned char key_value[4];
 
 static DEFINE_MUTEX(_my_mutex);
 
@@ -192,28 +274,24 @@ static long _devfops_ioctl(struct file *filp, unsigned int cmd, unsigned long ar
 		if (copy_from_user(&value, (int __user* ) arg, sizeof(value)))
 			return -ENOTTY;
 		printk(KERN_EMERG"GPIO-%d, value=%d\n", value.gpio, value.value);
-		if (value.gpio < 32) {
-			v = 0x01 << value.gpio;
-			if (value.value)
-				*(volatile u32 *) (RALINK_REG_PIOSET) = cpu_to_le32( v); //GPIO0 to GPIO31 data set register
-			else
-				*(volatile u32 *) (RALINK_REG_PIORESET) = cpu_to_le32(v); //GPIO0 to GPIO31 data clear register
-		} else if (value.gpio < 64) {
-			v = 0x01 << (value.gpio - 32);
-			if (value.value)
-				*(volatile u32 *) (RALINK_REG_PIO6332SET) = cpu_to_le32(v); //GPIO32 to GPIO63 data set register
-			else
-				*(volatile u32 *) (RALINK_REG_PIO6332RESET) = cpu_to_le32(v);
-		} else {
-			v = 0x01 << (value.gpio - 64);
-			if (value.value)
-				*(volatile u32 *) (RALINK_REG_PIO9564SET) = cpu_to_le32(v); //GPIO64 to GPIO95 data set register
-			else
-				*(volatile u32 *) (RALINK_REG_PIO9564RESET) = cpu_to_le32(v);
+		if (value.gpio < sizeof(_led_blink) / sizeof(_led_blink[0])) {
+			_led_blink[value.gpio].enable = 0;
+			_led_blink[value.gpio].timer = 0;
 		}
+		set_gpio_value(value.gpio, value.value);
 	}
 		break;
+	case MTIOCTL_GET_VALUE: {
+		//RALINK_REG_PIODATA
+		unsigned int v = 0; //32Bit
+		unsigned int gpio = 0;
 
+		if (copy_from_user(&gpio, (int __user* ) arg, sizeof(gpio)))
+			return -ENOTTY;
+		v = get_gpio_value(gpio);
+		copy_to_user((int __user * )arg, &v, sizeof(v));
+	}
+		break;
 	case MTIOCTL_ENABLE_IRQ:
 		*(volatile u32 *) (RALINK_REG_INTENA) = cpu_to_le32(RALINK_INTCTL_PIO);
 		break;
@@ -260,18 +338,43 @@ static long _devfops_ioctl(struct file *filp, unsigned int cmd, unsigned long ar
 		}
 	}
 		break;
+	case MTIOCTL_SET_LED_BLINK: {
+		struct led_blink_args value;
+		if (copy_from_user(&value, (int __user* ) arg, sizeof(value)))
+			return -ENOTTY;
+		if (value.gpio > sizeof(_led_blink) / sizeof(_led_blink[0])) {
+			printk(KERN_WARNING"gpio max is %d>%d\n", value.gpio,
+					sizeof(_led_blink) / sizeof(_led_blink[0]));
+			return -ENOTTY;
+		}
+		_led_blink[value.gpio].timer = value.timer;
+		_led_blink[value.gpio].enable = value.enable;
+	}
+		break;
 	}
 	return 0;
 }
 
 static ssize_t _devfops_write(struct file *filp, const char __user *data, size_t len, loff_t *offp) {
-	//if (len < sizeof(message)) {
-	//copy_from_user(message, data, len);
-	//} else {
-//		len = 0;
-//	}
-	ev_press = 1;
-	wake_up_interruptible(&my_waitq);
+	char args[50];
+	unsigned int gpio = 0;
+	unsigned int value = 0;
+	unsigned int v = 0;
+
+	if (len < sizeof(args)) {
+		memset(args, 0, sizeof(args));
+		copy_from_user(args, data, len);
+
+		if (2 == sscanf(args, "%d %d", &gpio, &value)) {
+			set_gpio_value(gpio, value);
+			return len;
+		}
+	} else {
+		len = 0;
+		return 0;
+	}
+	//ev_press = 1;
+	//wake_up_interruptible(&my_waitq);
 	return len;
 }
 
@@ -282,11 +385,14 @@ static ssize_t _devfops_read(struct file *filp, char __user *data, size_t len, l
 		else
 			wait_event_interruptible(my_waitq, ev_press);
 	}
+	ev_press = 0;
 
-	//ev_press = 0;
-	//copy_to_user(data, message, strlen(message));                //返回键值
-	//return strlen(message);
-	return 0;
+	key_value[0] = get_gpio_value(0);
+	key_value[1] = 0;
+	key_value[2] = get_gpio_value(2);
+	key_value[3] = get_gpio_value(3);
+	copy_to_user(data, key_value, sizeof(key_value));                //返回键值
+	return sizeof(key_value);
 }
 
 unsigned int _devfops_poll(struct file *filp, struct poll_table_struct *wait) {
@@ -304,16 +410,26 @@ static struct irqaction _my_irqaction = {
 		.handler = my_irq_handler ///////////////////////////
 		};
 
+volatile int _open_flag=0; //只能打开一次哦
+
 int _devfops_open(struct inode *inode, struct file *file) {
 	int ret = 0;
+	if(_open_flag) {
+		printk(KERN_EMERG"_devfops_open bus err\n");
+		return -EBUSY;
+	}
 	ret = setup_irq(SURFBOARDINT_GPIO, &_my_irqaction); //对应remove_irq
 	if (ret) {
 		printk(KERN_EMERG"setup_irq err\n");
+		return ret;
 	}
+	_open_flag=1;
 	return ret;
 }
 
 int _devfops_release(struct inode *inode, struct file *file) {
+	printk(KERN_EMERG"CGPIO _devfops_release \n");
+	_open_flag=0;
 	remove_irq(SURFBOARDINT_GPIO, &_my_irqaction);
 	return 0;
 }
@@ -342,10 +458,24 @@ struct miscdevice misc_dev = {
 
 //定时器任务
 static void _my_led_timer_handler(unsigned long unused) {
+	int i = 0;
+
+	for (i = 0; i < sizeof(_led_blink) / sizeof(_led_blink[0]); i++) {
+		if (_led_blink[i].enable == 0)
+			continue;
+		//
+		//printk("gpio %d enable \n", i);
+		if (jiffies - _led_blink[i].timer_tmp > _led_blink[i].timer) {
+			set_gpio_value(i, _led_blink[i].value);
+			_led_blink[i].value = ~_led_blink[i].value;
+			_led_blink[i].timer_tmp = jiffies;
+		}
+	}
+
 	init_timer(&_my_led_timer);
 	_my_led_timer.function = _my_led_timer_handler;
 	_my_led_timer.expires = jiffies + (HZ / 10);
-	//add_timer(&_my_led_timer);
+	add_timer(&_my_led_timer);
 }
 /*
  static struct class *my_class;
@@ -372,6 +502,8 @@ int __init my_init(void) {
 	printk(KERN_EMERG"GPIO1MODE=%08X\n", gpiomode);
 	printk(KERN_EMERG"GPIO2MODE=%08X\n", *(volatile u32 *) (RALINK_REG_GPIOMODE2));
 
+	memset(_led_blink,0,sizeof(_led_blink));
+
 #define WLED_AN_MODE_GPIO  1
 #define WLED_AN_MODE_WLED 0
 
@@ -383,7 +515,7 @@ int __init my_init(void) {
 	//0101  0101 0001
 
 	init_timer(&_my_led_timer);
-_my_led_timer.function = _my_led_timer_handler;
+	_my_led_timer.function = _my_led_timer_handler;
 	_my_led_timer.expires = jiffies + (HZ / 10);
 	add_timer(&_my_led_timer);
 	/***** 普通注册
