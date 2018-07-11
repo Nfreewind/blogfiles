@@ -93,7 +93,7 @@ struct led_blink_args {
 };
 
 struct led_blink {
-	int enable;
+	int mode; //0 默认,1 设置  2 定时
 	int value;
 
 	unsigned long timer; //定时间隔时间
@@ -214,15 +214,12 @@ struct arg_type {
 
 volatile unsigned char key_value[4];
 
-static DEFINE_MUTEX(_my_mutex);
+//static DEFINE_MUTEX(_my_mutex);
 
 //int _devfops_ioctl(struct inode *inode, struct file *file, unsigned int req,	unsigned long arg) {
 static long _devfops_ioctl(struct file *filp, unsigned int cmd, unsigned long arg) {
 	unsigned long tmp;
 
-	mutex_lock(&_my_mutex);
-
-	mutex_unlock(&_my_mutex);
 	switch (cmd) {
 	case MTIOCTL_SET_DIR_IN:
 		//0: GPIO input mode
@@ -275,8 +272,10 @@ static long _devfops_ioctl(struct file *filp, unsigned int cmd, unsigned long ar
 			return -ENOTTY;
 		printk(KERN_EMERG"GPIO-%d, value=%d\n", value.gpio, value.value);
 		if (value.gpio < sizeof(_led_blink) / sizeof(_led_blink[0])) {
-			_led_blink[value.gpio].enable = 0;
+			_led_blink[value.gpio].mode = 1;
+			_led_blink[value.gpio].value = value.value;
 			_led_blink[value.gpio].timer = 0;
+			_led_blink[value.gpio].timer_tmp = 0;
 		}
 		set_gpio_value(value.gpio, value.value);
 	}
@@ -348,7 +347,15 @@ static long _devfops_ioctl(struct file *filp, unsigned int cmd, unsigned long ar
 			return -ENOTTY;
 		}
 		_led_blink[value.gpio].timer = value.timer;
-		_led_blink[value.gpio].enable = value.enable;
+		_led_blink[value.gpio].timer_tmp=0;
+		if (value.enable)
+			_led_blink[value.gpio].mode = 2;
+		else
+			_led_blink[value.gpio].mode = 0;
+		_led_blink[value.gpio].value=0;
+
+		printk(KERN_WARNING"BLINK, GPIO-%d, timer=%d, enable=%d\n", value.gpio, value.timer,
+				value.enable);
 	}
 		break;
 	}
@@ -410,11 +417,11 @@ static struct irqaction _my_irqaction = {
 		.handler = my_irq_handler ///////////////////////////
 		};
 
-volatile int _open_flag=0; //只能打开一次哦
+volatile int _open_flag = 0; //只能打开一次哦
 
 int _devfops_open(struct inode *inode, struct file *file) {
 	int ret = 0;
-	if(_open_flag) {
+	if (_open_flag) {
 		printk(KERN_EMERG"_devfops_open bus err\n");
 		return -EBUSY;
 	}
@@ -423,13 +430,13 @@ int _devfops_open(struct inode *inode, struct file *file) {
 		printk(KERN_EMERG"setup_irq err\n");
 		return ret;
 	}
-	_open_flag=1;
+	_open_flag = 1;
 	return ret;
 }
 
 int _devfops_release(struct inode *inode, struct file *file) {
 	printk(KERN_EMERG"CGPIO _devfops_release \n");
-	_open_flag=0;
+	_open_flag = 0;
 	remove_irq(SURFBOARDINT_GPIO, &_my_irqaction);
 	return 0;
 }
@@ -459,16 +466,24 @@ struct miscdevice misc_dev = {
 //定时器任务
 static void _my_led_timer_handler(unsigned long unused) {
 	int i = 0;
+	int value=0;
 
 	for (i = 0; i < sizeof(_led_blink) / sizeof(_led_blink[0]); i++) {
-		if (_led_blink[i].enable == 0)
-			continue;
-		//
-		//printk("gpio %d enable \n", i);
-		if (jiffies - _led_blink[i].timer_tmp > _led_blink[i].timer) {
+		switch (_led_blink[i].mode) //0 默认,1 设置  2 定时
+		{
+		case 0:
+			break;
+		case 1:
 			set_gpio_value(i, _led_blink[i].value);
-			_led_blink[i].value = ~_led_blink[i].value;
-			_led_blink[i].timer_tmp = jiffies;
+			break;
+		case 2:
+			if (jiffies - _led_blink[i].timer_tmp > _led_blink[i].timer) {
+				value=get_gpio_value(i);
+				set_gpio_value(i, value>0?0:1);
+				///_led_blink[i].value = _led_blink[i].value>0?0:1;
+				_led_blink[i].timer_tmp = jiffies;
+			}
+			break;
 		}
 	}
 
@@ -486,7 +501,7 @@ int __init my_init(void) {
 	int ret = 0;
 	u32 gpiomode;
 
-	printk(KERN_EMERG"init\n");
+	printk(KERN_EMERG"================ mt7688 cgpio init 201807 ================\n");
 
 	ret = misc_register(&misc_dev); //字符杂项设备注册
 	if (ret) {
@@ -515,7 +530,7 @@ int __init my_init(void) {
 	//0101  0101 0001
 
 	init_timer(&_my_led_timer);
-	_my_led_timer.function = _my_led_timer_handler;
+_my_led_timer.function = _my_led_timer_handler;
 	_my_led_timer.expires = jiffies + (HZ / 10);
 	add_timer(&_my_led_timer);
 	/***** 普通注册
