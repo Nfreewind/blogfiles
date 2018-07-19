@@ -206,6 +206,7 @@ static irqreturn_t my_irq_handler(int irq, void *dev_id) {
 #define MTIOCTL_ENABLE_IRQ		4
 #define MTIOCTL_SET_INTERRUPT 5
 #define MTIOCTL_SET_LED_BLINK  6
+#define MTIOCTL_GET_SW_POA				7  //return Port Ability Offset:mt7688_datasheet_v1_4.pdf
 
 struct arg_type {
 	unsigned int gpio;
@@ -347,15 +348,20 @@ static long _devfops_ioctl(struct file *filp, unsigned int cmd, unsigned long ar
 			return -ENOTTY;
 		}
 		_led_blink[value.gpio].timer = value.timer;
-		_led_blink[value.gpio].timer_tmp=0;
+		_led_blink[value.gpio].timer_tmp = 0;
 		if (value.enable)
 			_led_blink[value.gpio].mode = 2;
 		else
 			_led_blink[value.gpio].mode = 0;
-		_led_blink[value.gpio].value=0;
+		_led_blink[value.gpio].value = 0;
 
 		printk(KERN_WARNING"BLINK, GPIO-%d, timer=%d, enable=%d\n", value.gpio, value.timer,
 				value.enable);
+	}
+		break;
+	case MTIOCTL_GET_SW_POA: {
+		tmp = le32_to_cpu(*(volatile u32 *)(RALINK_ETH_SW_BASE+0x80));
+		copy_to_user((u32 __user * )arg, &tmp, sizeof(u32));
 	}
 		break;
 	}
@@ -466,7 +472,7 @@ struct miscdevice misc_dev = {
 //定时器任务
 static void _my_led_timer_handler(unsigned long unused) {
 	int i = 0;
-	int value=0;
+	int value = 0;
 
 	for (i = 0; i < sizeof(_led_blink) / sizeof(_led_blink[0]); i++) {
 		switch (_led_blink[i].mode) //0 默认,1 设置  2 定时
@@ -478,8 +484,8 @@ static void _my_led_timer_handler(unsigned long unused) {
 			break;
 		case 2:
 			if (jiffies - _led_blink[i].timer_tmp > _led_blink[i].timer) {
-				value=get_gpio_value(i);
-				set_gpio_value(i, value>0?0:1);
+				value = get_gpio_value(i);
+				set_gpio_value(i, value > 0 ? 0 : 1);
 				///_led_blink[i].value = _led_blink[i].value>0?0:1;
 				_led_blink[i].timer_tmp = jiffies;
 			}
@@ -501,7 +507,7 @@ int __init my_init(void) {
 	int ret = 0;
 	u32 gpiomode;
 
-	printk(KERN_EMERG"================ mt7688 cgpio init 201807 ================\n");
+	printk(KERN_EMERG"================ mt7688 cgpio init 20180718 ================\n");
 
 	ret = misc_register(&misc_dev); //字符杂项设备注册
 	if (ret) {
