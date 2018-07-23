@@ -1,3 +1,6 @@
+/**
+ * 这是MT7688的基本gpio控制驱动，按键与LED控制(开关，闪烁)功能
+ */
 #include <linux/miscdevice.h>
 #include <linux/init.h>
 #include <linux/version.h>
@@ -168,7 +171,9 @@ static irqreturn_t my_irq_handler(int irq, void *dev_id) {
 	u32 _gpio_intp;
 	u32 _gpio_edge;
 
+	//10000690:GINT_STAT_0:GPIO0 to GPIO31 interrupt status register
 	_gpio_intp = le32_to_cpu(*(volatile u32 *)(RALINK_REG_PIOINT));
+	//100006A0:GINT_EDGE_0:GPIO0 to GPIO31 edge status register
 	_gpio_edge = le32_to_cpu(*(volatile u32 *)(RALINK_REG_PIOEDGE));
 
 	//1: Interrupt is detected
