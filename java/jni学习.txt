@@ -1,0 +1,21 @@
+javah -classpath /home/cc/workspace/ -jni com.cj.Test
+
+#C程序编译脚本
+JAVA_INCLUDE=/usr/lib/jvm/java-1.7.0-openjdk-i386
+
+all:
+	gcc -I$(JAVA_INCLUDE)/include/linux/ -I$(JAVA_INCLUDE)/include/ -I./ -fPIC -shared -o libTEST.so *.c
+
+C 与 java类转换
+
+jstring 转 char
+
+jstring jstr;
+const char *cstr = (*env)->GetStringUTFChars(env, jstr, JNI_FALSE);
+....
+(*env)->ReleaseStringUTFChars(env, jstr, tmp);
+
+创建byte[]
+unsigned char cdata[100];
+jbyteArray jbyte=(*env)->NewByteArray(env, 100); // byte[] jbyte=new byte[100];
+(*env)->SetByteArrayRegion(env, jbyte, 0, 100, cdata);

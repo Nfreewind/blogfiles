@@ -1,0 +1,148 @@
+lua与c交换，主要是入栈出栈
+c创建lua类，主要是元表(Metatable)原理__index
+注意.与:, :冒号代表面向对象栈的self(如c++的this) 
+
+function CClass:test()  == function CClass.test(self)
+
+标准头
+#include "lua5.1.5/lua.h"
+#include "lua5.1.5/lualib.h"
+#include "lua5.1.5/lauxlib.h"
+
+
+c构建lua环境
+
+lua_State 的定义在lua.h中, 为结构体struct lua_State(在lua源码lstate.h中),代表lua的一个线程状态,在c中调用lua都在这个里面
+
+int main(...) {
+	lua_State * L = luaL_newstate(); //初始化lua
+	 /*装载标准lib库:string, table, io,等lua基础命令库,
+			比如对lua的table.insert操作就调用table库tinsert(在ltablib.c值中),pairs在lbaselib.c中*/
+	luaL_openlibs(L);
+	
+	....
+	lua_close(L);
+}
+
+c调用lua脚本
+luaL_loadfile(L, "test.lua"); //加载test.lua脚本
+lua_pcall(L, 0, 0, 0);	//	运行test.lua
+
+栈操作
+lua栈索引：正数表示递增，负数表示递减(-1为栈顶)
+lua_gettop(L);  //返回栈顶索引,得到栈长度lua与c调用时，都是操作栈来交互数据 ,初始化时栈长度为0
+
+c调用lua函数
+
+test.lua
+function add(x, y)
+	return x+y
+end
+
+test.c
+int main(...){
+	lua_State * L = luaL_newstate();
+	luaL_openlibs(L);
+	luaL_loadfile(L, "test.lua");
+	lua_pcall(L, 0, 0, 0);
+	
+	lua_getglobal(L,"add"); //读取test.lua脚本中的add函数
+	lua_pushnumber(L,1); //压入变量, x
+	lua_pushnumber(L,2); //压入变量, y,执行后栈长度为lua_gettop()=3
+	lua_pcall(L, 2, 1, 0); //调用函数add,2个参数,1个返回值, 执行后栈顶为数字3,长度为1，表示lua命令 add(1,2)
+	printf("%d\n", lua_tointeger(L,-1)); //-1表示栈顶 integer表示转换为数字
+	printf("%d\n", luaL_checkinteger(L, -1)); //检查栈顶是否为integer类型，如果是则返回
+	printf("type=%s",lua_typename(L, lua_type(L,-1)));//得到lua栈顶类型
+	lua_settop(L,0); //清空栈,或lua_pop(L,1)=lua_settop(L,-2),弹出一个元素相当于设定-2位置
+	lua_close(L);
+	return 0;
+}
+
+gcc test.c -llua -lm -ldl
+
+	lua_pcall 执行栈上的函数调用（c或lua函数）,如果出错返回非零,如果返回有数据需要把这些数据从栈上去掉
+	lua_pushcfunction(L, aaa); ///aaa为c函数,返回值的数量
+	lua_pcall(L,0,0); //调用aaa函数
+	
+	test.c 修改
+	if(lua_pcall(L, 2, 1, 0)){
+		fprintf(stderr, "%s", lua_tostring(L, -1));
+		lua_pop(L,1); //从栈中弹出错误消息,这个时候不需要pop 3因为call时就已经把add(1,2)这3个栈元素出栈
+	}
+	lua_pop 从栈顶弹出元素 
+lua调用c
+
+test1.c
+
+const char* testfunc = "print(add(1,2.0))";
+
+static int cadd(lua_State* L)
+{
+    double op1 = luaL_checknumber(L,1);
+    double op2 = luaL_checknumber(L,2);
+    lua_pushnumber(L,op1 + op2);
+    return 1;
+}
+
+int main(char *argc, char **argv){
+	lua_State * L = luaL_newstate();
+	luaL_openlibs(L);
+	lua_register(L, "add", cadd); //注册功能
+	luaL_dostring(L,testfunc); //执行后lua_gettop=0
+	lua_close(L);
+	return 0;
+}
+
+在lua.h中
+#define lua_register(L,n,f) (lua_pushcfunction(L, (f)), lua_setglobal(L, (n)))
+#define lua_setglobal(L,s)	lua_setfield(L, LUA_GLOBALSINDEX, (s))
+#define lua_getglobal(L,s)	lua_getfield(L, LUA_GLOBALSINDEX, (s))
+lua中所有global全局变量在LUA_GLOBALSINDEX中,全局table(5.1特性)
+LUA_REGISTRYINDEX是Lua注册表（注册表是lua虚拟机范围内是全局唯一的）的伪索引
+
+
+lua中的c库
+luaL_register luaL_openlib
+
+test3.c
+static int caplibs_add(lua_State* L) {
+	...
+}
+
+struct luaL_Reg capilibs[]= {
+	{ "add", caplibs_add},
+	{ NULL, NULL}
+};
+
+luaL_register(L, "CAPI", caplibs);
+这样在lua脚本值就可以 CAPI.add 来调用c函数，在这里可以参考lua源码
+
+面向对象
+lua类与对象,主要靠元表metatable的__index方法
+
+setmetatable(table,metatable): 对指定table设置元表(metatable)，如果元表(metatable)中存在__metatable键值，setmetatable会失败
+getmetatable(table): 返回对象的元表(metatable)。
+__index 元方法:通过键来访问 table 的时候，如果这个键没有值，那么Lua就会寻找该table的metatable（假定有metatable）中的__index 键。
+				如果__index包含一个表格，Lua会在表格中查找相应的键
+
+类:
+test_oop.lua
+-- 
+CClass = { v=0 }
+
+function CClass:new(v) -- self 等于CClass, 因为CClass在这里就是对象了
+	o = {}
+	setmetatable(o,self)
+	self.__index=self
+	self.v=v
+	return o
+end
+
+function CClass.test(self) -- ==function CClass:test()
+	print("hello " .. self.v)
+end
+
+oo=CClass:new(3)  --CClass:new(3)== CClass.new(CClass,3)
+oo:test()
+-- 
+用c实现lua对象
