@@ -125,24 +125,60 @@ getmetatable(table): 返回对象的元表(metatable)。
 __index 元方法:通过键来访问 table 的时候，如果这个键没有值，那么Lua就会寻找该table的metatable（假定有metatable）中的__index 键。
 				如果__index包含一个表格，Lua会在表格中查找相应的键
 
+setmetatable( a,b) --a的元表为b, a.hello如果a里面没有hello则去元表寻找
 类:
 test_oop.lua
 -- 
-CClass = { v=0 }
+Cal = {}
 
-function CClass:new(v) -- self 等于CClass, 因为CClass在这里就是对象了
-	o = {}
-	setmetatable(o,self)
-	self.__index=self
-	self.v=v
-	return o
+function Cal:New(o)  
+    o = o or {}
+    setmetatable(o, self)   -- self==Cal, self为:的隐藏参数
+    self.__index = self
+    return o
 end
 
-function CClass.test(self) -- ==function CClass:test()
-	print("hello " .. self.v)
+function Cal:Add(a, b)
+    print("Cal Add")
+    return a + b
 end
 
-oo=CClass:new(3)  --CClass:new(3)== CClass.new(CClass,3)
-oo:test()
+a = Cal:New()
+print(a:Add(5, 6)) --11  a中没有Add方法，则会在Cal中查找Add方法。 a.Add(a,5,6)
 -- 
 用c实现lua对象
+注册c库
+struct luaL_Reg capilibs[]= {
+	{ "new", api_new},
+	{ "test", api_test},
+	{ "__gc", api_gc },
+	{ NULL, NULL}
+};
+luaL_register(L, "CAPI", apilibs); /* create module */
+
+luaL_newmetatable(L, "CAPI"); //创建元表
+lua_pushvalue(L, -1); //把栈顶数据复制后放到栈顶
+lua_setfield(L, -2, "__index");  //元表的__index=元表, -2是栈位置，也就是newmetatable这个位置, CAPI.__index=CAPI
+luaL_register(L, NULL, apilibs); //设定元表的功能函数为 apilibs
+lua_pop(L, 1); //出栈newmetatable的元素
+
+
+static int api_new(lua_State * L) {
+	struct User *user=lua_newuserdata(L, sizeof(struct User)); //在这
+	luaL_getmetatable(L, "CAPI"); //寻找元表CAPI
+	lua_setmetatable(L, -2); //设定userdata的元表为CAPI
+	return 1; 
+}
+
+o=CAPI:new()  --lua脚本执行时调用c的api_new, o为userdata,也就是c结构体User
+o:test() --去o中寻找test,这里o中没有，就去o的元表寻找，o的元表在api_new中设定为CAPI
+__gc --表示释放资源时调用
+
+static int api_new(lua_State * L) {
+	struct User *user = luaL_checkudata(L, 1, "CAPI");
+	///struct User  *user = lua_touserdata(L, -1);
+}
+
+
+collectgarbage("collect"): 做一次完整的垃圾收集循环，当调用后会进入__gc
+collectgarbage("count"): 以 K 字节数为单位返回 Lua 使用的总内存数
