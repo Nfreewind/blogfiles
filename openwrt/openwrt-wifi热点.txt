@@ -160,6 +160,17 @@ uci set dhcp.wifi.leasetime=12h
 
 uci commit
 
+#判断客户端在线个数
+iwpriv ra0 show stacountinfo
+[ 1290.250000] MAC                AID TxPackets   RxPackets   TxBytes     RxBytes     
+[ 1290.260000] B4:CD:27:E4:63:23  1   110         153         8337        15587  
+#MAC：WIFI客户端的MAC地址
+#AID：在AP这里用来唯一识别一个客户端的ID，在客户端连接上AP时动态指定；
+#TxPackets/RxPackets：AP发送给该客户端数据包数量，以及从该客户端接收到的数据包数量
+#TxBytes/RxBytes：AP发送给该客户端数据bytes，以及从该客户端接收到的数据bytes
+#arp缓存列表 /proc/net/arp
+
 /etc/init.d/dnsmasq disable
 /etc/init.d/network restart
 /etc/init.d/dnsmasq restart
+
